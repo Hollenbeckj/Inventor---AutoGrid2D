@@ -11,7 +11,8 @@ The rule creates a view sketch named `Grid` containing:
 
 - Gray grid lines, clipped to the selected boundary, at 0.18 mm line weight.
 - Black horizontal and vertical center axes with a long-dash-dot pattern,
-  clipped to the entire boundary, at 0.70 mm line weight. They pass through the
+  clipped to the entire boundary, at 1.00 mm line weight. The pattern scale is
+  2.0, giving longer dashes and gaps with fewer repeats. They pass through the
   polygon's area centroid to identify the center of the booth space.
 
 The center is the area centroid, which differs from the bounding-box center for
@@ -30,7 +31,8 @@ Layers are `2D-Grid` and `2D-Grid-Center`. New layers are visible and printable.
 Existing layer formatting is preserved; the new entities receive explicit
 color, line type, and weight overrides (continuous grid, long-dash-dot center
 axes). Existing layers must already
-be visible and printable. The weights are constants at the top of the rule.
+be visible and printable. The weights and centerline pattern scale are constants
+at the top of the rule.
 
 All selection, validation, input, clipping, and count checks precede document
 changes. Layer creation and sketch creation share one transaction. Document

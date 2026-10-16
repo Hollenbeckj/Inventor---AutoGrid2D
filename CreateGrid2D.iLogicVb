@@ -9,7 +9,8 @@ Sub Main()
     Const TOL As Double = 0.000001 ' Sheet centimeters (0.00001 mm).
     Const MAX_LINES As Integer = 2000
     Const GRID_WEIGHT As Double = 0.018 ' 0.18 mm on paper.
-    Const CENTER_WEIGHT As Double = 0.07 ' 0.70 mm on paper.
+    Const CENTER_WEIGHT As Double = 0.1 ' 1.00 mm on paper.
+    Const CENTER_PATTERN_SCALE As Double = 2.0 ' Longer dashes/gaps, fewer repeats.
 
     If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
         MessageBox.Show("Open an Inventor drawing first.", TITLE)
@@ -116,7 +117,7 @@ Sub Main()
             AddGridLine(sketch, gridLayer, line, GRID_WEIGHT, False)
         Next
         For Each line As Double() In centerLines
-            AddGridLine(sketch, centerLayer, line, CENTER_WEIGHT, True)
+            AddGridLine(sketch, centerLayer, line, CENTER_WEIGHT, True, CENTER_PATTERN_SCALE)
         Next
         sketch.DeferUpdates = False
         sketch.ExitEdit()
@@ -187,7 +188,8 @@ Function GetGridLayer(doc As DrawingDocument, name As String, weight As Double, 
     Return result
 End Function
 
-Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double(), weight As Double, bold As Boolean)
+Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double(), weight As Double, bold As Boolean, _
+                Optional patternScale As Double = 1.0)
     Dim tg As TransientGeometry = ThisApplication.TransientGeometry
     Dim a As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(coordinates(0), coordinates(1)))
     Dim b As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(coordinates(2), coordinates(3)))
@@ -196,6 +198,7 @@ Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double()
     line.LineDefinitionSpace = LineDefinitionSpaceEnum.kModelSpace
     ' Override each entity too: an existing center layer may still be continuous.
     line.LineType = If(bold, LineTypeEnum.kLongDashDottedLineType, LineTypeEnum.kContinuousLineType)
+    line.LineScale = patternScale
     line.LineWeight = weight
     line.OverrideColor = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
 End Sub
