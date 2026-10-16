@@ -10,8 +10,9 @@ are supported. Bare numbers use the drawing document's length units.
 The rule creates a view sketch named `Grid` containing:
 
 - Gray grid lines, clipped to the selected boundary, at 0.18 mm line weight.
-- Black horizontal and vertical center axes, clipped to the entire boundary,
-  at 0.70 mm line weight. They pass through the polygon's area centroid.
+- Black horizontal and vertical center axes with a long-dash-dot pattern,
+  clipped to the entire boundary, at 0.70 mm line weight. They pass through the
+  polygon's area centroid to identify the center of the booth space.
 
 The center is the area centroid, which differs from the bounding-box center for
 many trapezoids and irregular quadrilaterals. For a rectangle it is the ordinary
@@ -27,7 +28,8 @@ it will create only the center axes; it never creates an empty sketch.
 
 Layers are `2D-Grid` and `2D-Grid-Center`. New layers are visible and printable.
 Existing layer formatting is preserved; the new entities receive explicit
-color, continuous line type, and weight overrides. Existing layers must already
+color, line type, and weight overrides (continuous grid, long-dash-dot center
+axes). Existing layers must already
 be visible and printable. The weights are constants at the top of the rule.
 
 All selection, validation, input, clipping, and count checks precede document
@@ -58,7 +60,9 @@ Interactive selection, sketch editing, transaction rollback, and printed line
 appearance still need a live Inventor drawing check. Suggested checks:
 
 1. Run on a rectangle with a spacing that lands on its center; confirm that
-   the center axes are bold and have no duplicate ordinary lines.
+   the center axes are bold, use a long-dash-dot pattern, and have no duplicate
+   ordinary lines. Check an existing `2D-Grid-Center` layer as well: new center
+   entities must use the pattern even if that layer was previously continuous.
 2. Run on a rotated rectangle and trapezoid; inspect all clipped endpoints.
 3. Cancel each input stage; confirm no new layer or sketch is retained.
 4. Use spacing larger than the shape; confirm only the center axes are created.

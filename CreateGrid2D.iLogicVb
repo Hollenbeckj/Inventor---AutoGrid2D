@@ -1,4 +1,4 @@
-' CreateGrid2D - validated four-sided boundary, clipped grid and bold center axes.
+' CreateGrid2D - validated boundary, clipped grid and bold dash-dot center axes.
 ' Spacing is a model distance; directions are drawing-sheet X/Y.
 ' Center is the area centroid, not the bounding-box center.
 ' Geometry is a snapshot. Rerun after changing the model boundary.
@@ -181,7 +181,7 @@ Function GetGridLayer(doc As DrawingDocument, name As String, weight As Double, 
     Dim result As Layer = baseLayer.Copy(name)
     result.Color = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
     result.LineWeight = weight
-    result.LineType = LineTypeEnum.kContinuousLineType
+    result.LineType = If(bold, LineTypeEnum.kLongDashDottedLineType, LineTypeEnum.kContinuousLineType)
     result.Visible = True
     result.Plot = True
     Return result
@@ -194,7 +194,8 @@ Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double()
     Dim line As SketchLine = sketch.SketchLines.AddByTwoPoints(a, b)
     line.Layer = layer
     line.LineDefinitionSpace = LineDefinitionSpaceEnum.kModelSpace
-    line.LineType = LineTypeEnum.kContinuousLineType
+    ' Override each entity too: an existing center layer may still be continuous.
+    line.LineType = If(bold, LineTypeEnum.kLongDashDottedLineType, LineTypeEnum.kContinuousLineType)
     line.LineWeight = weight
     line.OverrideColor = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
 End Sub
