@@ -1,0 +1,373 @@
+' CreateGrid2D - validated four-sided boundary, clipped grid and bold center axes.
+' Spacing is a model distance; directions are drawing-sheet X/Y.
+' Center is the area centroid, not the bounding-box center.
+' Geometry is a snapshot. Rerun after changing the model boundary.
+Imports System.Collections.Generic
+
+Sub Main()
+    Const TITLE As String = "Create Grid"
+    Const TOL As Double = 0.000001 ' Sheet centimeters (0.00001 mm).
+    Const MAX_LINES As Integer = 2000
+    Const GRID_WEIGHT As Double = 0.018 ' 0.18 mm on paper.
+    Const CENTER_WEIGHT As Double = 0.07 ' 0.70 mm on paper.
+
+    If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Open an Inventor drawing first.", TITLE)
+        Exit Sub
+    End If
+
+    Dim doc As DrawingDocument = ThisApplication.ActiveDocument
+    Dim sketch As DrawingSketch = Nothing
+    Dim transaction As Transaction = Nothing
+    Dim editing As Boolean = False
+    Try
+        Dim edges As New List(Of Double())
+        Dim view As DrawingView = Nothing
+        For i As Integer = 0 To 3
+            Dim segment As DrawingCurveSegment = Nothing
+            Try
+                segment = TryCast(ThisApplication.CommandManager.Pick( _
+                    SelectionFilterEnum.kDrawingCurveSegmentFilter, _
+                    "Select boundary edge " & (i + 1) & " of 4 (Esc cancels)"), DrawingCurveSegment)
+            Catch cancelled As System.Runtime.InteropServices.COMException When cancelled.ErrorCode = -2147467260
+                Exit Sub ' E_ABORT: interactive selection was cancelled.
+            End Try
+            If segment Is Nothing Then Exit Sub
+            If segment.GeometryType <> Curve2dTypeEnum.kLineSegmentCurve2d Then
+                Throw New InvalidOperationException("Select four straight boundary edges.")
+            End If
+            Dim pickedView As DrawingView = segment.Parent.Parent
+            If view Is Nothing Then
+                view = pickedView
+            ElseIf Not (pickedView Is view) Then
+                Throw New InvalidOperationException("All four edges must belong to the same drawing view.")
+            End If
+            Dim a As Point2d = segment.StartPoint
+            Dim b As Point2d = segment.EndPoint
+            edges.Add(New Double() {a.X, a.Y, b.X, b.Y})
+        Next
+
+        For Each existing As DrawingSketch In view.Sketches
+            If String.Equals(existing.Name, "Grid", StringComparison.OrdinalIgnoreCase) Then
+                Throw New InvalidOperationException("This view already contains a 'Grid' sketch. " & _
+                    "Delete or rename it before regenerating the grid.")
+            End If
+        Next
+
+        Dim polygon As List(Of Double()) = OrderBoundary(edges, TOL)
+        Dim center As Double() = AreaCentroid(polygon, TOL)
+        Dim minX As Double = Double.MaxValue, minY As Double = Double.MaxValue
+        Dim maxX As Double = Double.MinValue, maxY As Double = Double.MinValue
+        For Each p As Double() In polygon
+            minX = Math.Min(minX, p(0)) : maxX = Math.Max(maxX, p(0))
+            minY = Math.Min(minY, p(1)) : maxY = Math.Max(maxY, p(1))
+        Next
+
+        Dim uom As UnitsOfMeasure = doc.UnitsOfMeasure
+        Dim unitName As String = uom.GetStringFromType(uom.LengthUnits)
+        Dim spacingX As Double = ReadSpacing(uom, "X spacing (between vertical grid lines)", unitName)
+        If spacingX = 0 Then Exit Sub
+        Dim spacingY As Double = ReadSpacing(uom, "Y spacing (between horizontal grid lines)", unitName)
+        If spacingY = 0 Then Exit Sub
+        If Not IsFinitePositive(view.Scale) Then Throw New InvalidOperationException("Invalid drawing-view scale.")
+        spacingX *= view.Scale
+        spacingY *= view.Scale
+        Dim countX As Integer = InteriorCount(maxX - minX, spacingX, TOL, MAX_LINES)
+        Dim countY As Integer = InteriorCount(maxY - minY, spacingY, TOL, MAX_LINES)
+        If countX + countY > MAX_LINES Then
+            Throw New InvalidOperationException("Too many grid lines. Increase the spacing (maximum " & MAX_LINES & " grid positions).")
+        End If
+
+        ' Plan every clipped segment before making any document changes.
+        Dim gridLines As New List(Of Double())
+        For i As Integer = 1 To countX
+            Dim x As Double = minX + i * spacingX
+            ' A center axis replaces a coincident grid line; avoid overlapping entities.
+            If Math.Abs(x - center(0)) > TOL Then gridLines.AddRange(ClipAxis(polygon, True, x, TOL))
+        Next
+        For i As Integer = 1 To countY
+            Dim y As Double = minY + i * spacingY
+            If Math.Abs(y - center(1)) > TOL Then gridLines.AddRange(ClipAxis(polygon, False, y, TOL))
+        Next
+        Dim centerLines As New List(Of Double())
+        centerLines.AddRange(ClipAxis(polygon, True, center(0), TOL))
+        centerLines.AddRange(ClipAxis(polygon, False, center(1), TOL))
+        If centerLines.Count = 0 Then Throw New InvalidOperationException("Could not construct the center mark.")
+        If Not InsidePolygon(polygon, center, TOL) Then
+            MessageBox.Show("This concave shape's area centroid lies outside its boundary. " & _
+                "The bold center axes will be clipped to the shape and will not cross inside it.", TITLE)
+        End If
+        If gridLines.Count + centerLines.Count > MAX_LINES Then
+            Throw New InvalidOperationException("Too many clipped segments. Increase the grid spacing.")
+        End If
+        If countX + countY = 0 Then
+            MessageBox.Show("The spacing exceeds the shape dimensions. Only the bold center mark will be created.", TITLE)
+        End If
+
+        transaction = ThisApplication.TransactionManager.StartTransaction(doc, TITLE)
+        Dim gridLayer As Layer = GetGridLayer(doc, "2D-Grid", GRID_WEIGHT, False)
+        Dim centerLayer As Layer = GetGridLayer(doc, "2D-Grid-Center", CENTER_WEIGHT, True)
+        sketch = view.Sketches.Add()
+        sketch.Name = "Grid"
+        sketch.Edit()
+        editing = True
+        sketch.DeferUpdates = True
+        For Each line As Double() In gridLines
+            AddGridLine(sketch, gridLayer, line, GRID_WEIGHT, False)
+        Next
+        For Each line As Double() In centerLines
+            AddGridLine(sketch, centerLayer, line, CENTER_WEIGHT, True)
+        Next
+        sketch.DeferUpdates = False
+        sketch.ExitEdit()
+        editing = False
+        If Not doc.Update2(False) Then Throw New InvalidOperationException("Inventor could not update the drawing.")
+        transaction.End()
+        transaction = Nothing
+        MessageBox.Show("Grid created successfully." & vbCrLf & _
+            "Grid segments: " & gridLines.Count & vbCrLf & _
+            "Bold center segments: " & centerLines.Count & vbCrLf & _
+            "Center: area centroid; axes span the selected boundary.", TITLE)
+    Catch ex As Exception
+        Dim cleanupErrors As String = ""
+        If editing AndAlso sketch IsNot Nothing Then
+            Try
+                sketch.ExitEdit()
+            Catch cleanup As Exception
+                cleanupErrors &= vbCrLf & "Exit sketch: " & cleanup.Message
+            End Try
+        End If
+        If transaction IsNot Nothing Then
+            Try
+                transaction.Abort()
+            Catch cleanup As Exception
+                cleanupErrors &= vbCrLf & "Rollback: " & cleanup.Message
+            End Try
+        End If
+        MessageBox.Show("The grid could not be created." & vbCrLf & ex.Message & cleanupErrors, _
+            TITLE, MessageBoxButtons.OK, MessageBoxIcon.Error)
+    End Try
+End Sub
+
+Function ReadSpacing(uom As UnitsOfMeasure, label As String, unitName As String) As Double
+    Dim previous As String = "12 " & unitName
+    Do
+        Dim entry As String = InputBox("Enter model distance for " & label & "." & vbCrLf & _
+            "Bare numbers use drawing units: " & unitName & "." & vbCrLf & _
+            "Examples: 12 in, 300 mm. Cancel leaves the drawing unchanged.", label, previous)
+        If entry = "" Then Return 0
+        previous = entry
+        Try
+            Dim value As Double = uom.GetValueFromExpression(entry.Trim(), UnitsTypeEnum.kDefaultDisplayLengthUnits)
+            If IsFinitePositive(value) Then Return value
+        Catch ex As Exception
+            ' Invalid expressions are retried without losing the selections.
+        End Try
+        MessageBox.Show("Enter a valid length greater than zero.", "Grid spacing")
+    Loop
+End Function
+
+Function GetGridLayer(doc As DrawingDocument, name As String, weight As Double, bold As Boolean) As Layer
+    ' Enumerate instead of interpreting any COM exception as a missing layer.
+    For Each existing As Layer In doc.StylesManager.Layers
+        If String.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase) Then
+            If Not existing.Visible OrElse Not existing.Plot Then
+                Throw New InvalidOperationException("Layer '" & name & "' must be visible and enabled for printing.")
+            End If
+            Return existing ' Preserve formatting shared with other entities.
+        End If
+    Next
+    Dim baseLayer As Layer = doc.StylesManager.ActiveStandardStyle.ActiveObjectDefaults.SketchGeometryLayer
+    Dim result As Layer = baseLayer.Copy(name)
+    result.Color = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
+    result.LineWeight = weight
+    result.LineType = LineTypeEnum.kContinuousLineType
+    result.Visible = True
+    result.Plot = True
+    Return result
+End Function
+
+Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double(), weight As Double, bold As Boolean)
+    Dim tg As TransientGeometry = ThisApplication.TransientGeometry
+    Dim a As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(coordinates(0), coordinates(1)))
+    Dim b As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(coordinates(2), coordinates(3)))
+    Dim line As SketchLine = sketch.SketchLines.AddByTwoPoints(a, b)
+    line.Layer = layer
+    line.LineDefinitionSpace = LineDefinitionSpaceEnum.kModelSpace
+    line.LineType = LineTypeEnum.kContinuousLineType
+    line.LineWeight = weight
+    line.OverrideColor = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
+End Sub
+
+' GEOMETRY KERNEL BEGIN - no Inventor dependencies, also used by regression tests.
+Function IsFinitePositive(value As Double) As Boolean
+    Return Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) AndAlso value > 0
+End Function
+
+Function Near(a As Double(), b As Double(), tol As Double) As Boolean
+    Return Math.Abs(a(0) - b(0)) <= tol AndAlso Math.Abs(a(1) - b(1)) <= tol
+End Function
+
+Function Cross(a As Double(), b As Double(), c As Double()) As Double
+    Return (b(0) - a(0)) * (c(1) - a(1)) - (b(1) - a(1)) * (c(0) - a(0))
+End Function
+
+Function OrderBoundary(edges As List(Of Double()), tol As Double) As List(Of Double())
+    If edges.Count <> 4 Then Throw New InvalidOperationException("Select exactly four edges.")
+    Dim vertices As New List(Of Double())
+    Dim links As New List(Of Integer())
+    For Each edge As Double() In edges
+        Dim pair(1) As Integer
+        For endpoint As Integer = 0 To 1
+            Dim p As Double() = {edge(endpoint * 2), edge(endpoint * 2 + 1)}
+            Dim found As Integer = -1
+            For i As Integer = 0 To vertices.Count - 1
+                If Near(p, vertices(i), tol) Then
+                    If found >= 0 Then Throw New InvalidOperationException("Boundary corners are too close together.")
+                    found = i
+                End If
+            Next
+            If found < 0 Then
+                vertices.Add(p)
+                found = vertices.Count - 1
+            End If
+            pair(endpoint) = found
+        Next
+        If pair(0) = pair(1) Then Throw New InvalidOperationException("A selected edge has zero or negligible length.")
+        For Each prior As Integer() In links
+            If (pair(0) = prior(0) AndAlso pair(1) = prior(1)) OrElse _
+               (pair(0) = prior(1) AndAlso pair(1) = prior(0)) Then
+                Throw New InvalidOperationException("The same boundary edge was selected more than once.")
+            End If
+        Next
+        links.Add(pair)
+    Next
+    If vertices.Count <> 4 Then Throw New InvalidOperationException("The edges must meet at four corners to form a closed boundary.")
+    Dim degree(3) As Integer
+    For Each link As Integer() In links
+        degree(link(0)) += 1 : degree(link(1)) += 1
+    Next
+    For Each d As Integer In degree
+        If d <> 2 Then Throw New InvalidOperationException("Each corner must join exactly two selected edges.")
+    Next
+    Dim polygon As New List(Of Double())
+    Dim used(3) As Boolean
+    Dim current As Integer = links(0)(0)
+    For stepIndex As Integer = 0 To 3
+        polygon.Add(vertices(current))
+        Dim nextEdge As Integer = -1
+        For i As Integer = 0 To 3
+            If Not used(i) AndAlso (links(i)(0) = current OrElse links(i)(1) = current) Then
+                nextEdge = i
+                Exit For
+            End If
+        Next
+        If nextEdge < 0 Then Throw New InvalidOperationException("The edges do not form one closed loop.")
+        used(nextEdge) = True
+        current = If(links(nextEdge)(0) = current, links(nextEdge)(1), links(nextEdge)(0))
+    Next
+    If current <> links(0)(0) Then Throw New InvalidOperationException("The boundary is not closed.")
+    If SegmentsMeet(polygon(0), polygon(1), polygon(2), polygon(3), tol) OrElse _
+       SegmentsMeet(polygon(1), polygon(2), polygon(3), polygon(0), tol) Then
+        Throw New InvalidOperationException("The boundary crosses or touches itself.")
+    End If
+    For i As Integer = 0 To 3
+        Dim a As Double() = polygon(i), b As Double() = polygon((i + 1) Mod 4)
+        Dim c As Double() = polygon((i + 2) Mod 4)
+        Dim length As Double = Math.Sqrt((b(0) - a(0)) ^ 2 + (b(1) - a(1)) ^ 2)
+        If Math.Abs(Cross(a, b, c)) <= tol * length Then
+            Throw New InvalidOperationException("The boundary must have four distinct, non-collinear corners.")
+        End If
+    Next
+    Return polygon
+End Function
+
+Function SegmentsMeet(a As Double(), b As Double(), c As Double(), d As Double(), tol As Double) As Boolean
+    If Math.Max(a(0), b(0)) < Math.Min(c(0), d(0)) - tol OrElse _
+       Math.Max(c(0), d(0)) < Math.Min(a(0), b(0)) - tol OrElse _
+       Math.Max(a(1), b(1)) < Math.Min(c(1), d(1)) - tol OrElse _
+       Math.Max(c(1), d(1)) < Math.Min(a(1), b(1)) - tol Then Return False
+    Dim abTol As Double = tol * Math.Sqrt((b(0) - a(0)) ^ 2 + (b(1) - a(1)) ^ 2)
+    Dim cdTol As Double = tol * Math.Sqrt((d(0) - c(0)) ^ 2 + (d(1) - c(1)) ^ 2)
+    Dim ac As Double = Cross(a, b, c), ad As Double = Cross(a, b, d)
+    Dim ca As Double = Cross(c, d, a), cb As Double = Cross(c, d, b)
+    Return Not ((ac > abTol AndAlso ad > abTol) OrElse (ac < -abTol AndAlso ad < -abTol) OrElse _
+                (ca > cdTol AndAlso cb > cdTol) OrElse (ca < -cdTol AndAlso cb < -cdTol))
+End Function
+
+Function AreaCentroid(polygon As List(Of Double()), tol As Double) As Double()
+    ' Translate to the first vertex to reduce cancellation at large sheet coordinates.
+    Dim ox As Double = polygon(0)(0), oy As Double = polygon(0)(1)
+    Dim twiceArea As Double = 0, sx As Double = 0, sy As Double = 0
+    Dim perimeter As Double = 0
+    For i As Integer = 0 To polygon.Count - 1
+        Dim a As Double() = polygon(i), b As Double() = polygon((i + 1) Mod polygon.Count)
+        Dim ax As Double = a(0) - ox, ay As Double = a(1) - oy
+        Dim bx As Double = b(0) - ox, by As Double = b(1) - oy
+        Dim term As Double = ax * by - bx * ay
+        twiceArea += term : sx += (ax + bx) * term : sy += (ay + by) * term
+        perimeter += Math.Sqrt((bx - ax) ^ 2 + (by - ay) ^ 2)
+    Next
+    If Math.Abs(twiceArea) <= tol * perimeter Then Throw New InvalidOperationException("The boundary has zero or negligible area.")
+    Return New Double() {ox + sx / (3 * twiceArea), oy + sy / (3 * twiceArea)}
+End Function
+
+Function InteriorCount(span As Double, spacing As Double, tol As Double, limit As Integer) As Integer
+    If Not IsFinitePositive(spacing) Then Throw New InvalidOperationException("Grid spacing is too small or invalid after view scaling.")
+    If span <= tol Then Throw New InvalidOperationException("The boundary is too small.")
+    Dim ratio As Double = (span - tol) / spacing
+    If Double.IsInfinity(ratio) OrElse ratio > limit + 1 Then
+        Throw New InvalidOperationException("Too many grid lines. Increase the spacing (maximum " & limit & " grid positions).")
+    End If
+    Return Math.Max(0, CInt(Math.Ceiling(ratio)) - 1)
+End Function
+
+Function ClipAxis(polygon As List(Of Double()), vertical As Boolean, position As Double, tol As Double) As List(Of Double())
+    Dim axis As Integer = If(vertical, 0, 1), other As Integer = 1 - axis
+    Dim hits As New List(Of Double)
+    For i As Integer = 0 To polygon.Count - 1
+        Dim a As Double() = polygon(i), b As Double() = polygon((i + 1) Mod polygon.Count)
+        Dim delta As Double = b(axis) - a(axis)
+        If Math.Abs(delta) <= tol Then
+            If Math.Abs(position - a(axis)) <= tol Then
+                hits.Add(a(other)) : hits.Add(b(other))
+            End If
+        Else
+            Dim t As Double = (position - a(axis)) / delta
+            If t >= 0 AndAlso t <= 1 Then hits.Add(a(other) + t * (b(other) - a(other)))
+        End If
+    Next
+    hits.Sort()
+    Dim unique As New List(Of Double)
+    For Each hit As Double In hits
+        If unique.Count = 0 OrElse Math.Abs(hit - unique(unique.Count - 1)) > tol Then unique.Add(hit)
+    Next
+    Dim result As New List(Of Double())
+    For i As Integer = 0 To unique.Count - 2
+        Dim lo As Double = unique(i), hi As Double = unique(i + 1)
+        If hi - lo <= tol Then Continue For
+        Dim middle As Double() = If(vertical, New Double() {position, (lo + hi) / 2}, New Double() {(lo + hi) / 2, position})
+        If InsidePolygon(polygon, middle, tol) Then
+            result.Add(If(vertical, New Double() {position, lo, position, hi}, New Double() {lo, position, hi, position}))
+        End If
+    Next
+    Return result
+End Function
+
+Function InsidePolygon(polygon As List(Of Double()), p As Double(), tol As Double) As Boolean
+    Dim inside As Boolean = False
+    For i As Integer = 0 To polygon.Count - 1
+        Dim a As Double() = polygon(i), b As Double() = polygon((i + 1) Mod polygon.Count)
+        Dim length As Double = Math.Sqrt((b(0) - a(0)) ^ 2 + (b(1) - a(1)) ^ 2)
+        ' Boundary is included so an axis through a concave corner remains well defined.
+        If Math.Abs(Cross(a, b, p)) <= tol * length AndAlso _
+           p(0) >= Math.Min(a(0), b(0)) - tol AndAlso p(0) <= Math.Max(a(0), b(0)) + tol AndAlso _
+           p(1) >= Math.Min(a(1), b(1)) - tol AndAlso p(1) <= Math.Max(a(1), b(1)) + tol Then Return True
+        If (a(1) > p(1)) <> (b(1) > p(1)) Then
+            Dim crossing As Double = a(0) + (p(1) - a(1)) * (b(0) - a(0)) / (b(1) - a(1))
+            If p(0) < crossing Then inside = Not inside
+        End If
+    Next
+    Return inside
+End Function
+' GEOMETRY KERNEL END

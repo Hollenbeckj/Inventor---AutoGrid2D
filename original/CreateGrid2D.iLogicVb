@@ -1,0 +1,255 @@
+' ============================================================
+' CreateGrid2D - iLogic version
+' Creates a sketch named "Grid" inside a drawing view, with
+' vertical and horizontal lines spaced inside a rectangle
+' defined by four picked edges. Lines go on layer "2D-Grid".
+' ============================================================
+
+Sub Main()
+
+    Const TITLE As String = "Create Grid"
+
+    '========================================
+    ' CHECK FOR DRAWING
+    '========================================
+    If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
+        MessageBox.Show("Open an Inventor drawing first.", TITLE, _
+                        MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+        Exit Sub
+    End If
+
+    Dim oDoc As DrawingDocument = ThisApplication.ActiveDocument
+
+
+    '========================================
+    ' CREATE / GET 2D-Grid LAYER
+    '========================================
+    Dim oGridLayer As Layer = Nothing
+
+    Try
+        oGridLayer = oDoc.StylesManager.Layers.Item("2D-Grid")
+    Catch
+        oGridLayer = Nothing
+    End Try
+
+    If oGridLayer Is Nothing Then
+        Dim oBaseLayer As Layer = _
+            oDoc.StylesManager.ActiveStandardStyle.ActiveObjectDefaults.SketchGeometryLayer
+        oBaseLayer.Copy("2D-Grid")
+        oGridLayer = oDoc.StylesManager.Layers.Item("2D-Grid")
+    End If
+
+    ' Set layer color: RGB 128, 128, 128
+    oGridLayer.Color = ThisApplication.TransientObjects.CreateColor(128, 128, 128)
+
+
+    '========================================
+    ' SELECT FOUR RECTANGLE EDGES
+    '========================================
+    Dim oSeg(3) As DrawingCurveSegment
+
+    For i As Integer = 0 To 3
+
+        Try
+            oSeg(i) = ThisApplication.CommandManager.Pick( _
+                SelectionFilterEnum.kDrawingCurveSegmentFilter, _
+                "Select rectangle edge " & (i + 1) & " of 4")
+        Catch
+            oSeg(i) = Nothing
+        End Try
+
+        ' User pressed Esc
+        If oSeg(i) Is Nothing Then Exit Sub
+
+        If oSeg(i).GeometryType <> Curve2dTypeEnum.kLineSegmentCurve2d Then
+            MessageBox.Show("Please select straight rectangle edges.", TITLE, _
+                            MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+            Exit Sub
+        End If
+
+    Next
+
+
+    '========================================
+    ' GET DRAWING VIEW
+    '========================================
+    Dim oView As DrawingView = oSeg(0).Parent.Parent
+
+    For i As Integer = 1 To 3
+        If Not oSeg(i).Parent.Parent Is oView Then
+            MessageBox.Show("All four edges must belong to the same drawing view.", TITLE, _
+                            MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+            Exit Sub
+        End If
+    Next
+
+
+    '========================================
+    ' CHECK FOR EXISTING GRID SKETCH
+    '========================================
+    For Each oExisting As DrawingSketch In oView.Sketches
+        If oExisting.Name = "Grid" Then
+            MessageBox.Show("This view already contains a sketch named 'Grid'." & _
+                            vbCrLf & vbCrLf & _
+                            "Delete or rename the existing Grid sketch and run the rule again.", _
+                            TITLE, MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+            Exit Sub
+        End If
+    Next
+
+
+    '========================================
+    ' FIND RECTANGLE EXTENTS (sheet space)
+    '========================================
+    Dim minX As Double = Double.MaxValue
+    Dim minY As Double = Double.MaxValue
+    Dim maxX As Double = Double.MinValue
+    Dim maxY As Double = Double.MinValue
+
+    For i As Integer = 0 To 3
+        Dim p1 As Point2d = oSeg(i).StartPoint
+        Dim p2 As Point2d = oSeg(i).EndPoint
+
+        minX = Math.Min(minX, Math.Min(p1.X, p2.X))
+        maxX = Math.Max(maxX, Math.Max(p1.X, p2.X))
+        minY = Math.Min(minY, Math.Min(p1.Y, p2.Y))
+        maxY = Math.Max(maxY, Math.Max(p1.Y, p2.Y))
+    Next
+
+
+    '========================================
+    ' ASK FOR GRID SPACING
+    '========================================
+    Dim strX As String = InputBox( _
+        "Enter horizontal grid spacing." & vbCrLf & _
+        "Examples: 12, 12 in, 300 mm", _
+        "Horizontal Grid Spacing", "12")
+    If strX = "" Then Exit Sub
+
+    Dim strY As String = InputBox( _
+        "Enter vertical grid spacing." & vbCrLf & _
+        "Examples: 12, 12 in, 300 mm", _
+        "Vertical Grid Spacing", "12")
+    If strY = "" Then Exit Sub
+
+
+    '========================================
+    ' CONVERT GRID SPACING (to database units, cm)
+    '========================================
+    Dim oUOM As UnitsOfMeasure = oDoc.UnitsOfMeasure
+    Dim modelSpacingX As Double
+    Dim modelSpacingY As Double
+
+    Try
+        modelSpacingX = oUOM.GetValueFromExpression(strX, UnitsTypeEnum.kDefaultDisplayLengthUnits)
+        modelSpacingY = oUOM.GetValueFromExpression(strY, UnitsTypeEnum.kDefaultDisplayLengthUnits)
+    Catch
+        MessageBox.Show("One of the grid dimensions could not be read." & _
+                        vbCrLf & vbCrLf & _
+                        "Examples:" & vbCrLf & _
+                        "12" & vbCrLf & _
+                        "12 in" & vbCrLf & _
+                        "1 ft" & vbCrLf & _
+                        "300 mm", _
+                        TITLE, MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+        Exit Sub
+    End Try
+
+    If modelSpacingX <= 0 Or modelSpacingY <= 0 Then
+        MessageBox.Show("Grid spacing must be greater than zero.", TITLE, _
+                        MessageBoxButtons.OK, MessageBoxIcon.Exclamation)
+        Exit Sub
+    End If
+
+
+    '========================================
+    ' CONVERT MODEL SIZE TO SHEET SIZE
+    '========================================
+    Dim sheetSpacingX As Double = modelSpacingX * oView.Scale
+    Dim sheetSpacingY As Double = modelSpacingY * oView.Scale
+
+
+    '========================================
+    ' CREATE GRID SKETCH
+    '========================================
+    Dim oSketch As DrawingSketch = Nothing
+    Dim oTrans As Transaction = _
+        ThisApplication.TransactionManager.StartTransaction(oDoc, "Create Grid")
+
+    Try
+        oSketch = oView.Sketches.Add
+        oSketch.Name = "Grid"
+        oSketch.Edit()
+
+        Dim oTG As TransientGeometry = ThisApplication.TransientGeometry
+        Const TOL As Double = 0.000001
+        Dim pos As Double
+
+        '----------------------------------------
+        ' VERTICAL GRID LINES
+        '----------------------------------------
+        pos = minX + sheetSpacingX
+        Do While pos < maxX - TOL
+            AddGridLine(oSketch, oTG, oGridLayer, pos, minY, pos, maxY)
+            pos += sheetSpacingX
+        Loop
+
+        '----------------------------------------
+        ' HORIZONTAL GRID LINES
+        '----------------------------------------
+        pos = minY + sheetSpacingY
+        Do While pos < maxY - TOL
+            AddGridLine(oSketch, oTG, oGridLayer, minX, pos, maxX, pos)
+            pos += sheetSpacingY
+        Loop
+
+        '----------------------------------------
+        ' FINISH
+        '----------------------------------------
+        oSketch.ExitEdit()
+        oTrans.End()
+        oDoc.Update()
+
+    Catch ex As Exception
+
+        Try
+            If oSketch IsNot Nothing Then oSketch.ExitEdit()
+        Catch
+        End Try
+
+        ' Roll back everything this rule created
+        Try
+            oTrans.Abort()
+        Catch
+        End Try
+
+        MessageBox.Show("The grid could not be created." & _
+                        vbCrLf & vbCrLf & _
+                        "Error:" & vbCrLf & ex.Message, _
+                        TITLE, MessageBoxButtons.OK, MessageBoxIcon.Error)
+        Exit Sub
+
+    End Try
+
+    MessageBox.Show("Grid created successfully." & vbCrLf & vbCrLf & _
+                    "Sketch: Grid" & vbCrLf & _
+                    "Layer: 2D-Grid" & vbCrLf & _
+                    "Color: RGB 128, 128, 128", _
+                    TITLE, MessageBoxButtons.OK, MessageBoxIcon.Information)
+
+End Sub
+
+
+'============================================
+' Draw one line between two sheet-space points
+'============================================
+Sub AddGridLine(oSketch As DrawingSketch, oTG As TransientGeometry, oLayer As Layer, _
+                x1 As Double, y1 As Double, x2 As Double, y2 As Double)
+
+    Dim sketchPt1 As Point2d = oSketch.SheetToSketchSpace(oTG.CreatePoint2d(x1, y1))
+    Dim sketchPt2 As Point2d = oSketch.SheetToSketchSpace(oTG.CreatePoint2d(x2, y2))
+
+    Dim oLine As SketchLine = oSketch.SketchLines.AddByTwoPoints(sketchPt1, sketchPt2)
+    oLine.Layer = oLayer
+
+End Sub
