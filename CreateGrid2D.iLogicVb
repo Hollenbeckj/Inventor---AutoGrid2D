@@ -1,4 +1,4 @@
-' CreateGrid2D - validated boundary, clipped grid and bold dash-dot center axes.
+' CreateGrid2D - clipped grid, bold dash-dot center axes and center circle.
 ' Spacing is a model distance; directions are drawing-sheet X/Y.
 ' Center is the area centroid, not the bounding-box center.
 ' Geometry is a snapshot. Rerun after changing the model boundary.
@@ -10,7 +10,7 @@ Sub Main()
     Const MAX_LINES As Integer = 2000
     Const GRID_WEIGHT As Double = 0.018 ' 0.18 mm on paper.
     Const CENTER_WEIGHT As Double = 0.1 ' 1.00 mm on paper.
-    Const CENTER_PATTERN_SCALE As Double = 2.0 ' Longer dashes/gaps, fewer repeats.
+    Const CENTER_PATTERN_SCALE As Double = 4.0 ' Longer dashes/gaps, fewer repeats.
 
     If ThisApplication.ActiveDocumentType <> DocumentTypeEnum.kDrawingDocumentObject Then
         MessageBox.Show("Open an Inventor drawing first.", TITLE)
@@ -29,7 +29,7 @@ Sub Main()
             Try
                 segment = TryCast(ThisApplication.CommandManager.Pick( _
                     SelectionFilterEnum.kDrawingCurveSegmentFilter, _
-                    "Select boundary edge " & (i + 1) & " of 4 (Esc cancels)"), DrawingCurveSegment)
+                    "Select one straight segment on outer side " & (i + 1) & " of 4 (Esc cancels)"), DrawingCurveSegment)
             Catch cancelled As System.Runtime.InteropServices.COMException When cancelled.ErrorCode = -2147467260
                 Exit Sub ' E_ABORT: interactive selection was cancelled.
             End Try
@@ -55,7 +55,7 @@ Sub Main()
             End If
         Next
 
-        Dim polygon As List(Of Double()) = OrderBoundary(edges, TOL)
+        Dim polygon As List(Of Double()) = BoundaryFromSides(edges, TOL)
         Dim center As Double() = AreaCentroid(polygon, TOL)
         Dim minX As Double = Double.MaxValue, minY As Double = Double.MaxValue
         Dim maxX As Double = Double.MinValue, maxY As Double = Double.MinValue
@@ -73,6 +73,8 @@ Sub Main()
         If Not IsFinitePositive(view.Scale) Then Throw New InvalidOperationException("Invalid drawing-view scale.")
         spacingX *= view.Scale
         spacingY *= view.Scale
+        ' Sheet-space radius: half the smaller selected model spacing, scaled once.
+        Dim centerRadius As Double = Math.Min(spacingX, spacingY) / 2.0
         Dim countX As Integer = InteriorCount(maxX - minX, spacingX, TOL, MAX_LINES)
         Dim countY As Integer = InteriorCount(maxY - minY, spacingY, TOL, MAX_LINES)
         If countX + countY > MAX_LINES Then
@@ -98,8 +100,8 @@ Sub Main()
             MessageBox.Show("This concave shape's area centroid lies outside its boundary. " & _
                 "The bold center axes will be clipped to the shape and will not cross inside it.", TITLE)
         End If
-        If gridLines.Count + centerLines.Count > MAX_LINES Then
-            Throw New InvalidOperationException("Too many clipped segments. Increase the grid spacing.")
+        If gridLines.Count + centerLines.Count + 1 > MAX_LINES Then
+            Throw New InvalidOperationException("Too many grid entities including the center circle. Increase the grid spacing.")
         End If
         If countX + countY = 0 Then
             MessageBox.Show("The spacing exceeds the shape dimensions. Only the bold center mark will be created.", TITLE)
@@ -119,6 +121,7 @@ Sub Main()
         For Each line As Double() In centerLines
             AddGridLine(sketch, centerLayer, line, CENTER_WEIGHT, True, CENTER_PATTERN_SCALE)
         Next
+        AddCenterCircle(sketch, centerLayer, center, centerRadius, CENTER_WEIGHT, CENTER_PATTERN_SCALE)
         sketch.DeferUpdates = False
         sketch.ExitEdit()
         editing = False
@@ -128,6 +131,7 @@ Sub Main()
         MessageBox.Show("Grid created successfully." & vbCrLf & _
             "Grid segments: " & gridLines.Count & vbCrLf & _
             "Bold center segments: " & centerLines.Count & vbCrLf & _
+            "Center circle: radius = half the smaller grid spacing." & vbCrLf & _
             "Center: area centroid; axes span the selected boundary.", TITLE)
     Catch ex As Exception
         Dim cleanupErrors As String = ""
@@ -203,6 +207,25 @@ Sub AddGridLine(sketch As DrawingSketch, layer As Layer, coordinates As Double()
     line.OverrideColor = ThisApplication.TransientObjects.CreateColor(If(bold, 0, 128), If(bold, 0, 128), If(bold, 0, 128))
 End Sub
 
+' Convert both center and a radius endpoint through the sketch transform.
+' Using the sheet radius directly in AddByCenterRadius would be wrong for a
+' view sketch whose coordinate scale differs from sheet space.
+Sub AddCenterCircle(sketch As DrawingSketch, layer As Layer, center As Double(), sheetRadius As Double, _
+                    weight As Double, patternScale As Double)
+    Dim tg As TransientGeometry = ThisApplication.TransientGeometry
+    Dim sketchCenter As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(center(0), center(1)))
+    Dim sketchRim As Point2d = sketch.SheetToSketchSpace(tg.CreatePoint2d(center(0) + sheetRadius, center(1)))
+    Dim radius As Double = sketchCenter.DistanceTo(sketchRim)
+    If Not IsFinitePositive(radius) Then Throw New InvalidOperationException("The center circle radius is invalid.")
+    Dim circle As SketchCircle = sketch.SketchCircles.AddByCenterRadius(sketchCenter, radius)
+    circle.Layer = layer
+    circle.LineDefinitionSpace = LineDefinitionSpaceEnum.kModelSpace
+    circle.LineType = LineTypeEnum.kLongDashDottedLineType
+    circle.LineScale = patternScale
+    circle.LineWeight = weight
+    circle.OverrideColor = ThisApplication.TransientObjects.CreateColor(0, 0, 0)
+End Sub
+
 ' GEOMETRY KERNEL BEGIN - no Inventor dependencies, also used by regression tests.
 Function IsFinitePositive(value As Double) As Boolean
     Return Not Double.IsNaN(value) AndAlso Not Double.IsInfinity(value) AndAlso value > 0
@@ -214,6 +237,108 @@ End Function
 
 Function Cross(a As Double(), b As Double(), c As Double()) As Double
     Return (b(0) - a(0)) * (c(1) - a(1)) - (b(1) - a(1)) * (c(0) - a(0))
+End Function
+
+Function BoundaryFromSides(edges As List(Of Double()), tol As Double) As List(Of Double())
+    ' Preserve exact closed boundaries, including concave quadrilaterals.
+    Try
+        Return OrderBoundary(edges, tol)
+    Catch disconnected As InvalidOperationException
+        ' Drawing edges may end at an occlusion or a split instead of a corner.
+        ' Recover a unique convex outline from the four supporting straight lines.
+    End Try
+    If edges.Count <> 4 Then Throw New InvalidOperationException("Select exactly four sides.")
+    For i As Integer = 0 To 3
+        Dim edge As Double() = edges(i)
+        Dim dx As Double = edge(2) - edge(0), dy As Double = edge(3) - edge(1)
+        Dim length As Double = Math.Sqrt(dx * dx + dy * dy)
+        If Not IsFinitePositive(length) OrElse length <= tol Then
+            Throw New InvalidOperationException("A selected segment has zero or negligible length.")
+        End If
+        For j As Integer = 0 To i - 1
+            Dim prior As Double() = edges(j)
+            Dim px As Double = prior(2) - prior(0), py As Double = prior(3) - prior(1)
+            Dim priorLength As Double = Math.Sqrt(px * px + py * py)
+            Dim sine As Double = (dx / length) * (py / priorLength) - (dy / length) * (px / priorLength)
+            Dim distance As Double = Math.Abs((prior(0) - edge(0)) * dy / length - (prior(1) - edge(1)) * dx / length)
+            If Math.Abs(sine) <= 0.00000001 AndAlso distance <= tol Then
+                Throw New InvalidOperationException("Two picks are on the same straight side. Select one segment on each of four different outer sides.")
+            End If
+        Next
+    Next
+
+    Dim found As List(Of Double()) = Nothing
+    ' Fix the first side and try the six possible orders of the other three.
+    For second As Integer = 1 To 3
+        For third As Integer = 1 To 3
+            If third = second Then Continue For
+            Dim fourth As Integer = 6 - second - third
+            Dim order As Integer() = {0, second, third, fourth}
+            Dim polygon As New List(Of Double())
+            For i As Integer = 0 To 3
+                Dim corner As Double() = SideIntersection(edges(order((i + 3) Mod 4)), edges(order(i)))
+                If corner Is Nothing Then Exit For
+                polygon.Add(corner)
+            Next
+            If polygon.Count <> 4 OrElse Not ValidInferredBoundary(edges, order, polygon, tol) Then Continue For
+            If found Is Nothing Then
+                found = polygon
+            Else
+                For Each corner As Double() In polygon
+                    Dim matches As Boolean = False
+                    For Each priorCorner As Double() In found
+                        If Near(corner, priorCorner, tol) Then matches = True
+                    Next
+                    If Not matches Then Throw New InvalidOperationException("The four sides give an ambiguous outline. Select clearer outer boundary segments.")
+                Next
+            End If
+        Next
+    Next
+    If found Is Nothing Then
+        Throw New InvalidOperationException("The selected segments do not define a closed four-sided outline. " & _
+            "Pick one straight segment from each outer side. Split or obscured sides are supported for convex shapes; " & _
+            "a concave shape requires four edges whose endpoints meet.")
+    End If
+    Return found
+End Function
+
+Function SideIntersection(a As Double(), b As Double()) As Double()
+    Dim ax As Double = a(2) - a(0), ay As Double = a(3) - a(1)
+    Dim bx As Double = b(2) - b(0), by As Double = b(3) - b(1)
+    Dim al As Double = Math.Sqrt(ax * ax + ay * ay), bl As Double = Math.Sqrt(bx * bx + by * by)
+    ax /= al : ay /= al : bx /= bl : by /= bl
+    Dim determinant As Double = ax * by - ay * bx
+    ' Reject parallel or numerically unstable, almost parallel adjacent sides.
+    If Math.Abs(determinant) <= 0.00000001 Then Return Nothing
+    Dim t As Double = ((b(0) - a(0)) * by - (b(1) - a(1)) * bx) / determinant
+    Dim x As Double = a(0) + t * ax, y As Double = a(1) + t * ay
+    If Double.IsNaN(x) OrElse Double.IsInfinity(x) OrElse Double.IsNaN(y) OrElse Double.IsInfinity(y) Then Return Nothing
+    Return New Double() {x, y}
+End Function
+
+Function ValidInferredBoundary(edges As List(Of Double()), order As Integer(), polygon As List(Of Double()), tol As Double) As Boolean
+    Dim winding As Integer = 0
+    For i As Integer = 0 To 3
+        Dim a As Double() = polygon(i), b As Double() = polygon((i + 1) Mod 4)
+        Dim c As Double() = polygon((i + 2) Mod 4)
+        Dim dx As Double = b(0) - a(0), dy As Double = b(1) - a(1)
+        Dim length As Double = Math.Sqrt(dx * dx + dy * dy)
+        If Not IsFinitePositive(length) OrElse length <= tol Then Return False
+        Dim turn As Double = Cross(a, b, c)
+        If Math.Abs(turn) <= tol * length Then Return False
+        If winding = 0 Then winding = Math.Sign(turn)
+        If Math.Sign(turn) <> winding Then Return False ' Only convex inference is unambiguous.
+        Dim edge As Double() = edges(order(i))
+        For endpoint As Integer = 0 To 1
+            Dim px As Double = edge(endpoint * 2) - a(0), py As Double = edge(endpoint * 2 + 1) - a(1)
+            Dim distanceAlong As Double = px * dx / length + py * dy / length
+            Dim distanceOff As Double = Math.Abs(px * dy / length - py * dx / length)
+            ' Both selected endpoints must actually lie on this inferred side.
+            ' Do not accept four arbitrary lines or segments beyond the corners.
+            If distanceAlong < -tol OrElse distanceAlong > length + tol OrElse distanceOff > tol Then Return False
+        Next
+    Next
+    Return True
 End Function
 
 Function OrderBoundary(edges As List(Of Double()), tol As Double) As List(Of Double())

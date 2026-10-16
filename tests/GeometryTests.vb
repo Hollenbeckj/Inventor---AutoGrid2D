@@ -66,6 +66,29 @@ Module GeometryTests
         almostClosed(0)(0) += Tol / 2
         AssertTrue(r.OrderBoundary(almostClosed, Tol).Count = 4, "endpoint tolerance")
 
+        CheckInterruptedPolygon(rectangle)
+        CheckInterruptedPolygon(diamond)
+        CheckInterruptedPolygon(trapezoid)
+        CheckInterruptedPolygon(shifted)
+        Dim oneInterrupted = ToEdges(rectangle)
+        oneInterrupted(0) = New Double() {2, 0, 7, 0}
+        AssertClose(r.AreaCentroid(r.BoundaryFromSides(oneInterrupted, Tol), Tol)(0), 5, "single obscured side")
+        Dim sameSide = ToEdges(rectangle)
+        sameSide(3) = New Double() {2, 0, 4, 0}
+        ExpectReject(Sub() r.BoundaryFromSides(sameSide, Tol), "two segments on the same supporting line")
+        ExpectReject(Sub() r.BoundaryFromSides(duplicate, Tol), "duplicate selection during recovery")
+        ExpectReject(Sub() r.BoundaryFromSides(zeroEdge, Tol), "zero edge during recovery")
+        ExpectReject(Sub() r.BoundaryFromSides(ToEdges(bowtie), Tol), "crossed boundary not reinterpreted")
+        ExpectReject(Sub() r.BoundaryFromSides(ToEdges(collinear), Tol), "collinear sides during recovery")
+        Dim overlong = ToEdges(rectangle)
+        overlong(0) = New Double() {-2, 0, 8, 0}
+        ExpectReject(Sub() r.BoundaryFromSides(overlong, Tol), "selected segment extends outside inferred corners")
+        Dim parallel As New List(Of Double()) From {
+            New Double() {1, 0, 4, 0}, New Double() {1, 3, 4, 3},
+            New Double() {1, 6, 4, 6}, New Double() {0, 1, 0, 5}}
+        ExpectReject(Sub() r.BoundaryFromSides(parallel, Tol), "three parallel sides")
+        ExpectReject(Sub() r.BoundaryFromSides(TrimEdges(concave), Tol), "disconnected concave outline")
+
         AssertTrue(r.InteriorCount(10, 2, Tol, 2000) = 4, "no boundary grid line")
         AssertTrue(r.InteriorCount(10, 3, Tol, 2000) = 3, "remainder spacing")
         AssertTrue(r.InteriorCount(10, 10, Tol, 2000) = 0, "spacing equal to span")
@@ -88,6 +111,50 @@ Module GeometryTests
         Return edges
     End Function
 
+    Function TrimEdges(polygon As List(Of Double())) As List(Of Double())
+        Dim result As New List(Of Double())
+        For Each edge In ToEdges(polygon)
+            Dim dx As Double = edge(2) - edge(0), dy As Double = edge(3) - edge(1)
+            result.Add(New Double() {edge(0) + 0.2 * dx, edge(1) + 0.2 * dy, edge(0) + 0.7 * dx, edge(1) + 0.7 * dy})
+        Next
+        Return result
+    End Function
+
+    Sub CheckInterruptedPolygon(polygon As List(Of Double()))
+        Dim edges = TrimEdges(polygon)
+        ' Reproduce the original failure before exercising supporting-line recovery.
+        ExpectReject(Sub() r.OrderBoundary(edges, Tol), "interrupted endpoints previously rejected")
+        Dim expected = r.AreaCentroid(polygon, Tol)
+        For a As Integer = 0 To 3
+            For b As Integer = 0 To 3
+                For c As Integer = 0 To 3
+                    For d As Integer = 0 To 3
+                        If a = b OrElse a = c OrElse a = d OrElse b = c OrElse b = d OrElse c = d Then Continue For
+                        For mask As Integer = 0 To 15
+                            Dim picks As New List(Of Double())
+                            Dim order As Integer() = {a, b, c, d}
+                            For i As Integer = 0 To 3
+                                Dim e = edges(order(i))
+                                picks.Add(If((mask And (1 << i)) = 0, e, New Double() {e(2), e(3), e(0), e(1)}))
+                            Next
+                            Dim recovered = r.BoundaryFromSides(picks, Tol)
+                            Dim actual = r.AreaCentroid(recovered, Tol)
+                            AssertClose(actual(0), expected(0), "interrupted centroid X")
+                            AssertClose(actual(1), expected(1), "interrupted centroid Y")
+                            For Each corner In polygon
+                                Dim matches As Boolean = False
+                                For Each p In recovered
+                                    If r.Near(corner, p, Tol) Then matches = True
+                                Next
+                                AssertTrue(matches, "recovered original corner")
+                            Next
+                        Next
+                    Next
+                Next
+            Next
+        Next
+    End Sub
+
     Sub CheckPolygon(polygon As List(Of Double()))
         Dim edges = ToEdges(polygon)
         Dim expected = r.AreaCentroid(polygon, Tol)
@@ -104,7 +171,7 @@ Module GeometryTests
                                 Dim e = edges(order(i))
                                 permutation.Add(If((mask And (1 << i)) = 0, e, New Double() {e(2), e(3), e(0), e(1)}))
                             Next
-                            Dim actual = r.AreaCentroid(r.OrderBoundary(permutation, Tol), Tol)
+                            Dim actual = r.AreaCentroid(r.BoundaryFromSides(permutation, Tol), Tol)
                             AssertClose(actual(0), expected(0), "pick order centroid X")
                             AssertClose(actual(1), expected(1), "pick order centroid Y")
                         Next
