@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "project": "Inventor - AutoGrid2D",
+  "repository": "https://github.com/Hollenbeckj/Inventor---AutoGrid2D",
+  "timezone": "America/Los_Angeles",
+  "updated": "2026-10-16",
+  "scope": "Summaries reconstructed from this project conversation and existing context; not a verbatim transcript.",
+  "events": [
+    {
+      "id": "2026-10-16-01-audit",
+      "date": "2026-10-16",
+      "kind": "audit",
+      "summary": "Audit the existing four-sided drawing grid macro.",
+      "details": ["Bounding-box drawing could extend outside rotated or irregular boundaries.", "Selections were not validated as a loop; layer changes preceded cancellation and transactions.", "Tiny spacing lacked creation limits; update happened after transaction commit; large spacing could create an empty sketch."],
+      "verification": "Static source audit and Autodesk API documentation; no live execution at that stage."
+    },
+    {
+      "id": "2026-10-16-02-geometry",
+      "date": "2026-10-16",
+      "kind": "implementation",
+      "summary": "Validate boundaries, clip the grid, and add bold centroid axes.",
+      "details": ["Sheet-aligned grid uses explicit model spacing and drawing-view scale.", "Validate selection and geometry before mutation; create layer and sketch in one transaction; update before commit.", "Use the area centroid, bounded entity counts, retryable spacing inputs, and explicit entity formatting.", "Preserve existing layer formatting and create a center-only mark when ordinary spacing exceeds the outline."],
+      "verification": "Full rule compilation against Inventor 2027 and 9,211 automated geometry assertions passed; installed rule backed up and updated."
+    },
+    {
+      "id": "2026-10-16-03-repository",
+      "date": "2026-10-16",
+      "kind": "repository",
+      "summary": "Create the initial project commit and sync toolbar icons.",
+      "details": ["GitHub repository is Hollenbeckj/Inventor---AutoGrid2D on main.", "Include the current rule, original reference, README, regression harness, and two toolbar BMPs.", "Ignore build outputs and timestamped local macro backups.", "Historical commits include 6fc1c30 and d859231; verify actual Git state before reporting remote status."],
+      "verification": "Git reported successful pushes and clean working trees at those steps."
+    },
+    {
+      "id": "2026-10-16-04-center-style",
+      "date": "2026-10-16",
+      "kind": "decision",
+      "summary": "Use bold dash-dot centerlines with fewer pattern repeats.",
+      "details": ["The user clarified that density meant centerline dashes, not the whole grid.", "Center weight increased from 0.70 mm to 1.00 mm.", "Centerline pattern scale progressed from default to 2.0 and then 4.0; ordinary grid remains gray continuous at 0.18 mm."],
+      "verification": "Full-rule compilation and existing geometry suite passed after styling changes; installed macro updated with backups. Printed appearance was not exhaustively verified."
+    },
+    {
+      "id": "2026-10-16-05-center-circle",
+      "date": "2026-10-16",
+      "kind": "implementation",
+      "summary": "Add a matching dashed circle at the booth centroid.",
+      "details": ["Circle radius is half the smaller selected X/Y grid spacing.", "Convert center and radius endpoint from sheet to sketch space; do not pass a sheet radius directly to the sketch API.", "Keep the circle complete even if it extends outside the outline; match center-axis color, pattern, scale, weight, and layer."],
+      "verification": "Full rule compiled against Inventor 2027; existing geometry suite passed. Circle-specific interactive and print validation remains limited."
+    },
+    {
+      "id": "2026-10-16-06-development-move",
+      "date": "2026-10-16",
+      "kind": "repository",
+      "summary": "Move the project to a development folder and define line endings.",
+      "details": ["The user moved the checkout out of OneDrive; checkout and installed macro locations are machine-specific.", "Add .gitattributes: CRLF for iLogic/VB/PowerShell, LF for Markdown, BMP binary.", "The moved checkout initially lacked the latest circle feature; it was preserved from the installed macro during the later boundary fix.", "Historical line-ending commit: d83a5df."],
+      "verification": "Whitespace checks passed; line endings were normalized without changing the reference macro's content."
+    },
+    {
+      "id": "2026-10-16-07-interrupted-boundaries",
+      "date": "2026-10-16",
+      "kind": "bugfix",
+      "summary": "Recover convex outlines when picked side segments do not reach the corners.",
+      "details": ["The user's screenshot showed the endpoint-validation error on a booth outline with interrupted sides.", "Try the exact closed boundary first; otherwise infer a unique convex outline from four supporting lines.", "Allow arbitrary pick order and edge direction; require selected endpoints to lie within the inferred sides.", "Reject duplicate supporting sides, unstable/parallel adjacent sides, crossed or ambiguous outlines, and disconnected concave outlines.", "Concave boundaries still need four meeting edges. Prompt for one straight segment on each outer side.", "Preserve the center circle and pattern scale 4.0; update development and installed copies with a backup. Historical commit: 2146734."],
+      "verification": "Full rule compiled against Inventor 2027; 18,440 assertions passed, including regression cases reproducing the old failure."
+    },
+    {
+      "id": "2026-10-16-08-user-live-test",
+      "date": "2026-10-16",
+      "kind": "user_validation",
+      "summary": "The user confirmed the previously failing example now works.",
+      "details": ["The user reran the function on the same example shown in the screenshot and reported success."],
+      "verification": "User-reported live Inventor result for one example; not a full shape/scale/printing validation matrix."
+    },
+    {
+      "id": "2026-10-16-09-handoff-notes",
+      "date": "2026-10-16",
+      "kind": "documentation",
+      "summary": "Establish shared context and agent guidance for continuing on another PC.",
+      "details": ["Existing PROJECT_CONTEXT.md records accepted behavior, evidence, limitations, and open validation work.", "Existing AGENTS.md requires reading and maintaining context and preserving accepted implementation details.", "Historical documentation commits: d91efef and 12e4e0e."],
+      "verification": "Existing tracked documents and Git log were inspected; no functional source changes or new Inventor tests were required."
+    },
+    {
+      "id": "2026-10-16-10-portable-database",
+      "date": "2026-10-16",
+      "kind": "standing_instruction",
+      "summary": "Keep portable context and database files updated whenever the project changes.",
+      "details": ["The user requested ongoing backups of project discussions and changes so another computer can read them.", "Maintain current-state Markdown and append discussion summaries to context/history.json after substantive work.", "Regenerate context/project_context.sqlite with tools/update_context.py; store matching events, document snapshots, and normalized source hashes.", "Include context artifacts with authorized commits and push only when authorized; another PC receives changes after a GitHub sync.", "Do not change Codex internal databases or claim these records contain the complete chat transcript."],
+      "verification": "The generator provides read-only --check validation for SQLite integrity, history parity, document snapshots, and source hashes; its actual result is recorded in PROJECT_CONTEXT.md."
+    }
+  ]
+}

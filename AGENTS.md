@@ -12,3 +12,28 @@ Before making changes, read PROJECT_CONTEXT.md, README.md, the current CreateGri
 - Preserve validation-before-mutation, transactional document changes, explicit new-entity formatting, geometry limits, centroid semantics, and the stated orthographic-view limitations.
 - Keep device-specific paths and setup local where possible. Do not commit credentials, private drawings, proprietary model files, or generated build artifacts.
 - Follow the user's authorization for commits, remote pushes, macro installation, and messaging other chats.
+
+## Required discussion backups and portable database
+
+User instruction recorded 2026-10-16: whenever this project changes, preserve
+what was discussed in context files and database files readable on another PC.
+
+- After each substantive discussion or change, update PROJECT_CONTEXT.md and
+  append a dated, uniquely identified event to context/history.json. Preserve
+  prior events; add corrections as new events. Do this before reporting the task
+  complete, even when no commit has been requested.
+- Run `python tools/update_context.py` and then
+  `python tools/update_context.py --check` after the final source/context edits.
+  Use a suitable local Python 3.9+ interpreter; no third-party packages are
+  required. If unavailable, keep the readable notes and explicitly report that
+  the SQLite snapshot still needs regeneration. Do not claim synchronization.
+- The generated context/project_context.sqlite stores the history, handoff
+  document snapshots, and normalized source hashes. Treat Markdown and JSON as
+  the editable sources; do not update SQLite independently. Read
+  context/README.md when resuming on another computer.
+- Include these artifacts in authorized commits alongside the corresponding
+  changes. Push only when authorized. Check Git before claiming a remote backup
+  exists; another PC receives local changes only after an actual sync.
+- Summarize decisions, behavior, validation, unresolved issues, and deployment
+  status. These are project records, not a complete chat transcript. Do not
+  copy secrets/private drawings or modify Codex's internal conversation stores.

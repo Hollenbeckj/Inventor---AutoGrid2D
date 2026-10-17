@@ -100,3 +100,32 @@ Editing a Git checkout does not automatically update Inventor's installed extern
 - For coding on a second PC, clone/pull the repository, open the folder, and ask the assistant to read AGENTS.md, this file, and README.md.
 - GitHub exchanges code and these notes; it does not sync a local Codex transcript or install the macro into Inventor.
 - Keep this brief updated after meaningful decisions, fixes, confirmed test results, installation changes, or unresolved issues. Never silently turn proposed work into completed status.
+
+## Ongoing discussion backup requirement — 2026-10-16
+
+The user requested that project discussions and changes always be preserved in
+portable context and database files for use on another computer. This is a
+standing workflow requirement, not a new macro feature.
+
+- AGENTS.md now requires updating this file and appending a history event after
+  substantive discussion or work, before declaring the task complete.
+- context/history.json contains dated summaries of the audit, geometry fixes,
+  repository/icon work, centerline styling, center circle, development-folder
+  move, line-ending policy, interrupted-edge repair, user validation, and this
+  backup requirement. It is not a verbatim transcript.
+- context/project_context.sqlite mirrors the history and stores snapshots of
+  AGENTS.md, PROJECT_CONTEXT.md, README.md, and context/README.md, plus hashes of
+  the rule, tests, generator, and line-ending policy.
+- tools/update_context.py builds the database using Python's standard library;
+  `--check` checks integrity, JSON parity, document snapshots, and source hashes.
+- context/README.md explains regeneration and reading the records on another PC.
+
+Validation for this documentation/tooling change: the generator and read-only
+check both passed with 10 history records, four context snapshots, and five
+source hashes. No macro code was changed, no geometry suite was rerun, and no
+new live Inventor test was performed. Macro evidence remains the previously
+recorded compilation, 18,440 assertions, and user-confirmed example.
+
+The new backup files and guidance are local until committed and pushed. For a
+handoff, perform the authorized Git sync, then clone/pull on the second PC and
+read these files. They do not transfer the full chat UI or install the macro.

@@ -93,3 +93,18 @@ appearance still need a live Inventor drawing check. Suggested checks:
 API references: [sheet-to-sketch conversion](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-API/files/DrawingSketch_SheetToSketchSpace.htm),
 [sketch line formatting](https://help.autodesk.com/cloudhelp/2019/ENU/Inventor-API/files/SketchLine.htm),
 [document update result](https://help.autodesk.com/cloudhelp/2024/ENU/Inventor-API/files/DrawingDocument_Update2.htm).
+
+## Shared project memory
+
+Read [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for decisions and current status,
+and [context/README.md](context/README.md) for the portable discussion history
+and SQLite database. Update these records after substantive project work.
+Rebuild and verify the database with Python 3.9+:
+
+```text
+python tools/update_context.py
+python tools/update_context.py --check
+```
+
+Commit the context artifacts with authorized project commits and push when
+authorized so another computer can receive them by cloning or pulling.
